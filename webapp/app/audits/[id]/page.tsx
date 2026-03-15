@@ -46,7 +46,8 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
     .order('severity', { ascending: true })
 
   const project = audit.projects as { name: string; url: string; id: string } | null
-  const result = audit.audit_results as {
+  const auditResultRaw = audit.audit_results
+  const result = (Array.isArray(auditResultRaw) ? auditResultRaw[0] : auditResultRaw) as {
     overall_score: number | null
     technical_score: number | null
     content_score: number | null

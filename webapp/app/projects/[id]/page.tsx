@@ -113,7 +113,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         ) : (
           <div className="divide-y divide-slate-100">
             {audits.map(audit => {
-              const result = audit.audit_results as { overall_score: number | null } | null
+              const auditResultRaw = audit.audit_results
+              const result = (Array.isArray(auditResultRaw) ? auditResultRaw[0] : auditResultRaw) as { overall_score: number | null } | null
               return (
                 <Link key={audit.id} href={`/audits/${audit.id}`} className="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors group">
                   <div className="min-w-0">
