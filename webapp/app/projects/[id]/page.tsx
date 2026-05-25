@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Plus, Globe, Calendar, ChartBar as BarChart2 } from 'lucide-react'
 import StatusBadge from '@/components/ui/StatusBadge'
+import ScoreTrendChart from './ScoreTrendChart'
+import EditProjectForm from './EditProjectForm'
 
 const commandLabels: Record<string, string> = {
   audit: 'Full Audit', page: 'Page Analysis', technical: 'Technical SEO',
@@ -16,8 +18,12 @@ const industryLabels: Record<string, string> = {
   publisher: 'Publisher', agency: 'Agency', generic: 'General',
 }
 
-export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProjectPage({ params, searchParams }: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ edit?: string }>
+}) {
   const { id } = await params
+  const { edit } = await searchParams
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -35,6 +41,34 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     .select('*, audit_results(overall_score)')
     .eq('project_id', id)
     .order('created_at', { ascending: false })
+
+  // Build chart data from completed audits with scores
+  const chartData = (audits ?? [])
+    .filter(a => a.status === 'completed')
+    .map(a => {
+      const resultRaw = a.audit_results
+      const result = (Array.isArray(resultRaw) ? resultRaw[0] : resultRaw) as { overall_score: number | null } | null
+      return {
+        date: new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        score: result?.overall_score ?? null,
+        command: commandLabels[a.command] || a.command,
+      }
+    })
+    .filter(d => d.score !== null)
+    .reverse()
+
+  if (edit === '1') {
+    return (
+      <div className="p-6 lg:p-8 max-w-2xl">
+        <Link href={`/projects/${id}`} className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mb-6 transition-colors">
+          <ArrowLeft className="w-4 h-4" />
+          Back to project
+        </Link>
+        <h1 className="text-2xl font-bold text-slate-900 mb-6">Edit Project</h1>
+        <EditProjectForm project={project} />
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 lg:p-8 max-w-5xl">
@@ -54,7 +88,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <span className="text-slate-300">·</span>
             <span className="text-sm text-slate-500 flex items-center gap-1">
               <BarChart2 className="w-3.5 h-3.5" />
-              {industryLabels[project.industry]}
+              {industryLabels[project.industry] || project.industry}
             </span>
             <span className="text-slate-300">·</span>
             <span className="text-sm text-slate-500 flex items-center gap-1">
@@ -65,32 +99,49 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           {project.description && <p className="text-slate-500 text-sm mt-2">{project.description}</p>}
         </div>
 
-        <Link
-          href={`/audits/new?project=${id}`}
-          className="inline-flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex-shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          New audit
-        </Link>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Link
+            href={`/projects/${id}?edit=1`}
+            className="inline-flex items-center gap-2 border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+          >
+            Edit
+          </Link>
+          <Link
+            href={`/audits/new?project=${id}`}
+            className="inline-flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New audit
+          </Link>
+        </div>
       </div>
 
-      {/* Stats */}
+      {/* Score summary + chart */}
       {project.latest_score !== null && (
         <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Latest SEO Health Score</h2>
-          <div className="flex items-center gap-4">
-            <div className={`text-5xl font-bold ${project.latest_score >= 80 ? 'text-emerald-600' : project.latest_score >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
-              {project.latest_score}
-            </div>
-            <div>
-              <div className="w-48 bg-slate-100 rounded-full h-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-start gap-6">
+            <div className="flex-shrink-0">
+              <p className="text-sm text-slate-500 mb-2">Latest SEO Health Score</p>
+              <div className="flex items-end gap-2">
+                <div className={`text-5xl font-bold ${project.latest_score >= 80 ? 'text-emerald-600' : project.latest_score >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {project.latest_score}
+                </div>
+                <span className="text-slate-400 text-lg mb-1">/100</span>
+              </div>
+              <div className="w-40 bg-slate-100 rounded-full h-2 mt-3">
                 <div
-                  className={`h-2.5 rounded-full ${project.latest_score >= 80 ? 'bg-emerald-500' : project.latest_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
+                  className={`h-2 rounded-full ${project.latest_score >= 80 ? 'bg-emerald-500' : project.latest_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
                   style={{ width: `${project.latest_score}%` }}
                 />
               </div>
-              <p className="text-sm text-slate-500 mt-1">out of 100</p>
             </div>
+
+            {chartData.length > 1 && (
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-slate-500 mb-3">Score over time</p>
+                <ScoreTrendChart data={chartData} />
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -4,7 +4,9 @@ import Link from 'next/link'
 import { ArrowLeft, ExternalLink, RefreshCw } from 'lucide-react'
 import StatusBadge from '@/components/ui/StatusBadge'
 import SeverityBadge from '@/components/ui/SeverityBadge'
+import ScoreRing from '@/components/ui/ScoreRing'
 import AuditResultsClient from './AuditResultsClient'
+import RawDataToggle from './RawDataToggle'
 import type { Severity, FindingCategory } from '@/lib/types'
 
 const commandLabels: Record<string, string> = {
@@ -63,12 +65,12 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
   const infoCount = findings?.filter(f => f.severity === 'info').length ?? 0
 
   const scoreCategories = result ? [
-    { label: 'Technical', score: result.technical_score, weight: '22%' },
-    { label: 'Content', score: result.content_score, weight: '23%' },
-    { label: 'Schema', score: result.schema_score, weight: '10%' },
-    { label: 'Performance', score: result.performance_score, weight: '10%' },
-    { label: 'Images', score: result.images_score, weight: '5%' },
-    { label: 'AI Search', score: result.geo_score, weight: '10%' },
+    { label: 'Technical', score: result.technical_score },
+    { label: 'Content', score: result.content_score },
+    { label: 'Schema', score: result.schema_score },
+    { label: 'Performance', score: result.performance_score },
+    { label: 'Images', score: result.images_score },
+    { label: 'AI Search', score: result.geo_score },
   ] : []
 
   return (
@@ -96,12 +98,17 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
 
-        {audit.status === 'failed' && (
-          <Link href={`/audits/new?command=${audit.command}`} className="inline-flex items-center gap-2 border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            <RefreshCw className="w-4 h-4" />
-            Retry audit
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {(audit.status === 'completed' || audit.status === 'failed') && (
+            <Link
+              href={`/audits/new?command=${audit.command}${project ? `&project=${project.id}` : ''}&url=${encodeURIComponent(audit.url)}`}
+              className="inline-flex items-center gap-2 border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Re-run audit
+            </Link>
+          )}
+        </div>
       </div>
 
       {audit.status === 'failed' && audit.error_message && (
@@ -116,40 +123,32 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
       ) : (
         <>
           {/* Scores */}
-          {result && (
+          {result && result.overall_score !== null && (
             <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-6">
-                <div className="text-center sm:text-left">
-                  <p className="text-sm text-slate-500 mb-1">Overall Score</p>
-                  <div className={`text-6xl font-bold ${
-                    (result.overall_score ?? 0) >= 80 ? 'text-emerald-600' :
-                    (result.overall_score ?? 0) >= 60 ? 'text-amber-600' : 'text-red-600'
-                  }`}>
-                    {result.overall_score ?? '—'}
-                  </div>
-                  <p className="text-sm text-slate-400">/ 100</p>
+              <div className="flex flex-col sm:flex-row items-center gap-8">
+                <div className="flex-shrink-0">
+                  <ScoreRing score={result.overall_score} size={130} label="Overall Score" />
                 </div>
 
-                <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {scoreCategories.map(({ label, score, weight }) => score !== null && (
-                    <div key={label}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs text-slate-500">{label}</span>
-                        <span className="text-xs text-slate-400">{weight}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-slate-100 rounded-full h-2">
+                <div className="flex-1 w-full">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {scoreCategories.map(({ label, score }) => score !== null && (
+                      <div key={label}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-medium text-slate-500">{label}</span>
+                          <span className={`text-xs font-semibold ${score >= 80 ? 'text-emerald-600' : score >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
+                            {score}
+                          </span>
+                        </div>
+                        <div className="bg-slate-100 rounded-full h-1.5">
                           <div
-                            className={`h-2 rounded-full ${score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
+                            className={`h-1.5 rounded-full transition-all duration-700 ${score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
                             style={{ width: `${score}%` }}
                           />
                         </div>
-                        <span className={`text-sm font-semibold w-8 text-right ${score >= 80 ? 'text-emerald-600' : score >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
-                          {score}
-                        </span>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -206,18 +205,9 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
             </>
           )}
 
-          {/* Raw data */}
+          {/* Technical Details (collapsible) */}
           {result?.raw_data && Object.keys(result.raw_data).length > 0 && (
-            <div className="mt-6 bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100">
-                <h2 className="font-semibold text-slate-900">Raw Data</h2>
-              </div>
-              <div className="p-6">
-                <pre className="text-xs text-slate-600 bg-slate-50 rounded-lg p-4 overflow-x-auto max-h-96">
-                  {JSON.stringify(result.raw_data, null, 2)}
-                </pre>
-              </div>
-            </div>
+            <RawDataToggle rawData={result.raw_data} />
           )}
 
           {audit.status === 'completed' && !result && (

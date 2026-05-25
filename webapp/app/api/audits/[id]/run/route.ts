@@ -4,6 +4,32 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { runAudit } from '@/lib/audit-runner'
 import type { AuditCommand } from '@/lib/types'
 
+const BLOCKED_HOSTS = [
+  'localhost', '127.0.0.1', '0.0.0.0', '::1',
+  '169.254.169.254', // AWS metadata
+  '100.100.100.200', // Alibaba Cloud metadata
+  'metadata.google.internal',
+]
+
+function isSafeUrl(rawUrl: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    return false
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+
+  const hostname = parsed.hostname.toLowerCase()
+  if (BLOCKED_HOSTS.includes(hostname)) return false
+
+  // Block private/link-local ranges by hostname pattern
+  if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|fc|fd)/.test(hostname)) return false
+
+  return true
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -29,6 +55,29 @@ export async function POST(
 
   if (audit.status !== 'pending') {
     return NextResponse.json({ error: 'Audit is not in pending state' }, { status: 400 })
+  }
+
+  // SSRF protection — validate URL before executing
+  if (!isSafeUrl(audit.url)) {
+    const admin = createAdminClient()
+    await admin
+      .from('audits')
+      .update({ status: 'failed', error_message: 'URL rejected: private or invalid address' })
+      .eq('id', id)
+    return NextResponse.json({ error: 'Invalid URL' }, { status: 400 })
+  }
+
+  // Rate limiting — max 10 audits per user per hour
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const { count } = await supabase
+    .from('audits')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .in('status', ['running', 'completed'])
+    .gte('created_at', oneHourAgo)
+
+  if ((count ?? 0) >= 10) {
+    return NextResponse.json({ error: 'Rate limit: max 10 audits per hour' }, { status: 429 })
   }
 
   const admin = createAdminClient()

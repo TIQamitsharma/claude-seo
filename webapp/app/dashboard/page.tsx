@@ -17,10 +17,13 @@ export default async function DashboardPage() {
 
   const firstName = profile?.display_name?.split(' ')[0] || user?.email?.split('@')[0] || 'there'
 
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Good morning, {firstName}</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{greeting}, {firstName}</h1>
         <p className="text-slate-500 mt-1">Here&apos;s an overview of your SEO activity.</p>
       </div>
 
@@ -96,10 +99,15 @@ export default async function DashboardPage() {
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="font-semibold text-slate-900">Recent Audits</h2>
-            <Link href="/audits/new" className="inline-flex items-center gap-1.5 text-sm text-sky-600 hover:text-sky-700 font-medium">
-              <Plus className="w-4 h-4" />
-              New audit
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link href="/audits" className="text-sm text-slate-500 hover:text-slate-700 font-medium">
+                View all
+              </Link>
+              <Link href="/audits/new" className="inline-flex items-center gap-1.5 text-sm text-sky-600 hover:text-sky-700 font-medium">
+                <Plus className="w-4 h-4" />
+                New audit
+              </Link>
+            </div>
           </div>
 
           {!recentAudits || recentAudits.length === 0 ? (
