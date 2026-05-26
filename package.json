@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix webapp",
-    "build": "npm run build --prefix webapp",
+    "build": "cd webapp && npx next build",
     "start": "npm run start --prefix webapp",
     "lint": "npm run lint --prefix webapp",
     "install": "npm install --prefix webapp"
