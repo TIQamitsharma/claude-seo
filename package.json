@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix webapp",
-    "build": "cd webapp && npx next build",
-    "start": "npm run start --prefix webapp",
+    "build": "cd webapp && NEXT_TELEMETRY_DISABLED=1 npx next build --webpack",
+    "start": "NEXT_TELEMETRY_DISABLED=1 npm run start --prefix webapp",
     "lint": "npm run lint --prefix webapp",
     "install": "npm install --prefix webapp"
   }
