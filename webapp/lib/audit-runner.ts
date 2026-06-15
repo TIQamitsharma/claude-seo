@@ -1,5 +1,40 @@
 import type { AuditCommand } from './types'
 
+interface PageSpeedData {
+  lcp: number | null
+  cls: number | null
+  inp: number | null
+  ttfb: number | null
+  performanceScore: number | null
+}
+
+async function fetchPageSpeedData(url: string): Promise<PageSpeedData | null> {
+  const apiKey = process.env.GOOGLE_PAGESPEED_API_KEY
+  if (!apiKey) return null
+
+  try {
+    const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&key=${apiKey}&category=performance`
+    const res = await fetch(endpoint, { signal: AbortSignal.timeout(30000) })
+    if (!res.ok) return null
+
+    const data = await res.json()
+    const metrics = data?.lighthouseResult?.audits
+    const categories = data?.lighthouseResult?.categories
+
+    if (!metrics) return null
+
+    return {
+      lcp: metrics['largest-contentful-paint']?.numericValue ?? null,
+      cls: metrics['cumulative-layout-shift']?.numericValue ?? null,
+      inp: metrics['interaction-to-next-paint']?.numericValue ?? null,
+      ttfb: metrics['server-response-time']?.numericValue ?? null,
+      performanceScore: categories?.performance?.score != null ? Math.round(categories.performance.score * 100) : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 interface PageFetchResult {
   url: string
   finalUrl: string
@@ -514,36 +549,80 @@ function generateSchemaFindings(pageData: PageFetchResult, findings: Finding[]):
   return { critical, warnings }
 }
 
-function generatePerformanceFindings(pageData: PageFetchResult, findings: Finding[]): { critical: number; warnings: number } {
+function generatePerformanceFindings(pageData: PageFetchResult, findings: Finding[], psi: PageSpeedData | null): { critical: number; warnings: number } {
   let critical = 0
   let warnings = 0
 
-  if (pageData.responseTimeMs > 3000) {
-    findings.push({
-      severity: 'critical',
-      category: 'performance',
-      title: 'Slow server response time (TTFB)',
-      description: `Time to First Byte is ${pageData.responseTimeMs}ms. Google recommends under 600ms.`,
-      recommendation: 'Optimize server response time, enable caching, and use a CDN.',
-    })
-    critical++
-  } else if (pageData.responseTimeMs > 1500) {
-    findings.push({
-      severity: 'warning',
-      category: 'performance',
-      title: 'Moderate server response time',
-      description: `TTFB is ${pageData.responseTimeMs}ms. Aim for under 600ms for best Core Web Vitals.`,
-      recommendation: 'Consider server-side caching, database query optimization, or a CDN.',
-    })
-    warnings++
+  if (psi) {
+    // Use real PageSpeed Insights data when available
+    const score = psi.performanceScore
+    if (score !== null) {
+      if (score < 50) {
+        findings.push({ severity: 'critical', category: 'performance', title: `Poor PageSpeed score (${score}/100)`, description: `Google PageSpeed Insights rates this page ${score}/100 on mobile. This directly impacts Core Web Vitals assessment.`, recommendation: 'Run PageSpeed Insights to identify specific opportunities. Focus on image optimization, render-blocking resources, and server response time.' })
+        critical++
+      } else if (score < 90) {
+        findings.push({ severity: 'warning', category: 'performance', title: `PageSpeed score needs improvement (${score}/100)`, description: `Google PageSpeed Insights rates this page ${score}/100 on mobile.`, recommendation: 'Improve images, reduce unused JavaScript/CSS, and leverage browser caching to raise the score above 90.' })
+        warnings++
+      } else {
+        findings.push({ severity: 'info', category: 'performance', title: `Good PageSpeed score (${score}/100)`, description: 'PageSpeed Insights reports a good performance score.', recommendation: 'Continue monitoring after deployments to prevent regressions.' })
+      }
+    }
+
+    if (psi.lcp !== null) {
+      const lcpS = (psi.lcp / 1000).toFixed(2)
+      if (psi.lcp > 4000) {
+        findings.push({ severity: 'critical', category: 'performance', title: `Poor LCP (${lcpS}s)`, description: `Largest Contentful Paint is ${lcpS}s. Google considers anything above 4s "Poor".`, recommendation: 'Optimize the largest above-fold element: preload key images, use a CDN, eliminate render-blocking resources.' })
+        critical++
+      } else if (psi.lcp > 2500) {
+        findings.push({ severity: 'warning', category: 'performance', title: `LCP needs improvement (${lcpS}s)`, description: `LCP is ${lcpS}s. Google's "Good" threshold is under 2.5s.`, recommendation: 'Preload the LCP image, optimize server response time, and reduce above-fold render-blocking resources.' })
+        warnings++
+      } else {
+        findings.push({ severity: 'info', category: 'performance', title: `Good LCP (${lcpS}s)`, description: 'Largest Contentful Paint is within Google\'s "Good" range (<2.5s).', recommendation: 'Monitor LCP after major content or layout changes.' })
+      }
+    }
+
+    if (psi.cls !== null) {
+      const clsFixed = psi.cls.toFixed(3)
+      if (psi.cls > 0.25) {
+        findings.push({ severity: 'critical', category: 'performance', title: `Poor CLS (${clsFixed})`, description: `Cumulative Layout Shift is ${clsFixed}. Google considers above 0.25 "Poor".`, recommendation: 'Set explicit width/height on images and videos. Avoid inserting content above existing content after page load.' })
+        critical++
+      } else if (psi.cls > 0.1) {
+        findings.push({ severity: 'warning', category: 'performance', title: `CLS needs improvement (${clsFixed})`, description: `CLS is ${clsFixed}. Google's "Good" threshold is under 0.1.`, recommendation: 'Reserve space for dynamic content (ads, embeds) and ensure fonts load without layout shifts.' })
+        warnings++
+      } else {
+        findings.push({ severity: 'info', category: 'performance', title: `Good CLS (${clsFixed})`, description: 'Cumulative Layout Shift is within Google\'s "Good" range (<0.1).', recommendation: 'Continue testing CLS after adding new content areas.' })
+      }
+    }
+
+    if (psi.inp !== null) {
+      const inpMs = Math.round(psi.inp)
+      if (psi.inp > 500) {
+        findings.push({ severity: 'critical', category: 'performance', title: `Poor INP (${inpMs}ms)`, description: `Interaction to Next Paint is ${inpMs}ms. Google considers above 500ms "Poor".`, recommendation: 'Reduce main thread blocking by code-splitting JavaScript and deferring non-critical scripts.' })
+        critical++
+      } else if (psi.inp > 200) {
+        findings.push({ severity: 'warning', category: 'performance', title: `INP needs improvement (${inpMs}ms)`, description: `INP is ${inpMs}ms. Google's "Good" threshold is under 200ms.`, recommendation: 'Minimize long tasks and reduce JavaScript execution time to improve interactivity.' })
+        warnings++
+      }
+    }
+
+    if (psi.ttfb !== null) {
+      const ttfbMs = Math.round(psi.ttfb)
+      if (psi.ttfb > 600) {
+        findings.push({ severity: 'warning', category: 'performance', title: `Slow server response (TTFB: ${ttfbMs}ms)`, description: `Server response time is ${ttfbMs}ms. Google recommends under 600ms.`, recommendation: 'Enable server-side caching, use a CDN, and optimize database queries.' })
+        warnings++
+      }
+    }
   } else {
-    findings.push({
-      severity: 'info',
-      category: 'performance',
-      title: `Good server response time (${pageData.responseTimeMs}ms)`,
-      description: 'Server responds quickly, which is good for Core Web Vitals (TTFB).',
-      recommendation: 'Continue monitoring TTFB over time and after deployments.',
-    })
+    // Fall back to basic response time measurement
+    if (pageData.responseTimeMs > 3000) {
+      findings.push({ severity: 'critical', category: 'performance', title: 'Slow server response time (TTFB)', description: `Time to First Byte is ${pageData.responseTimeMs}ms. Google recommends under 600ms.`, recommendation: 'Optimize server response time, enable caching, and use a CDN.' })
+      critical++
+    } else if (pageData.responseTimeMs > 1500) {
+      findings.push({ severity: 'warning', category: 'performance', title: 'Moderate server response time', description: `TTFB is ${pageData.responseTimeMs}ms. Aim for under 600ms for best Core Web Vitals.`, recommendation: 'Consider server-side caching, database query optimization, or a CDN.' })
+      warnings++
+    } else {
+      findings.push({ severity: 'info', category: 'performance', title: `Good server response time (${pageData.responseTimeMs}ms)`, description: 'Server responds quickly, which is good for Core Web Vitals (TTFB).', recommendation: 'Continue monitoring TTFB over time and after deployments.' })
+    }
   }
 
   return { critical, warnings }
@@ -949,7 +1028,7 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
   const raw: Record<string, unknown> = { url, command, timestamp: new Date().toISOString() }
   if (pageData) raw.page = pageData
 
-  // Fetch robots.txt and sitemap
+  // Fetch robots.txt, sitemap, llms.txt, and PageSpeed data in parallel
   const parsedUrlObj = new URL(url)
   const baseOrigin = `${parsedUrlObj.protocol}//${parsedUrlObj.hostname}`
   const llmsTxtUrl = `${baseOrigin}/llms.txt`
@@ -959,11 +1038,15 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
   let hasLlmsTxt = false
   let robotsContent: string | null = null
   let sitemapContent: string | null = null
+  let psiData: PageSpeedData | null = null
 
-  const [llmsRes, robotsRes, sitemapRes] = await Promise.allSettled([
+  const needsPerf = ['technical', 'audit', 'page'].includes(command)
+
+  const [llmsRes, robotsRes, sitemapRes, psiRes] = await Promise.allSettled([
     fetch(llmsTxtUrl, { signal: AbortSignal.timeout(5000) }),
     fetch(robotsTxtUrl, { signal: AbortSignal.timeout(5000) }),
     (command === 'sitemap' || command === 'audit') ? fetch(sitemapUrl, { signal: AbortSignal.timeout(8000) }) : Promise.reject(),
+    needsPerf ? fetchPageSpeedData(url) : Promise.resolve(null),
   ])
 
   if (llmsRes.status === 'fulfilled' && llmsRes.value.ok) hasLlmsTxt = true
@@ -973,12 +1056,16 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
   if (sitemapRes.status === 'fulfilled' && sitemapRes.value.ok) {
     sitemapContent = await sitemapRes.value.text()
   }
+  if (psiRes.status === 'fulfilled' && psiRes.value) {
+    psiData = psiRes.value
+  }
 
   raw.checked = {
     llms_txt: llmsTxtUrl,
     robots_txt: robotsTxtUrl,
     has_llms_txt: hasLlmsTxt,
     has_robots_txt: !!robotsContent,
+    pagespeed_available: psiData !== null,
   }
 
   // Handle page-level errors up front for commands that need page data
@@ -1034,7 +1121,7 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
         const t = generateTechnicalFindings(pageData, findings)
         technicalCritical = t.critical
         technicalWarnings = t.warnings
-        const p = generatePerformanceFindings(pageData, findings)
+        const p = generatePerformanceFindings(pageData, findings, psiData)
         perfCritical = p.critical
         perfWarnings = p.warnings
       }
@@ -1063,7 +1150,6 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
     }
 
     case 'sitemap': {
-      generateSitemapFindings(sitemapContent, sitemapUrl, findings).critical
       const sm = generateSitemapFindings(sitemapContent, sitemapUrl, findings)
       schemaCritical = sm.critical
       schemaWarnings = sm.warnings
@@ -1128,7 +1214,7 @@ export async function runAudit(url: string, command: AuditCommand): Promise<{
         const s = generateSchemaFindings(pageData, findings)
         schemaCritical = s.critical
         schemaWarnings = s.warnings
-        const p = generatePerformanceFindings(pageData, findings)
+        const p = generatePerformanceFindings(pageData, findings, psiData)
         perfCritical = p.critical
         perfWarnings = p.warnings
         const i = generateImageFindings(pageData, findings)

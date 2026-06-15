@@ -7,6 +7,7 @@ import SeverityBadge from '@/components/ui/SeverityBadge'
 import ScoreRing from '@/components/ui/ScoreRing'
 import AuditResultsClient from './AuditResultsClient'
 import RawDataToggle from './RawDataToggle'
+import AISuggestions from './AISuggestions'
 import type { Severity, FindingCategory } from '@/lib/types'
 
 const commandLabels: Record<string, string> = {
@@ -152,6 +153,17 @@ export default async function AuditPage({ params }: { params: Promise<{ id: stri
                 </div>
               </div>
             </div>
+          )}
+
+          {/* AI Recommendations */}
+          {audit.status === 'completed' && findings && findings.length > 0 && (
+            <AISuggestions
+              auditId={id}
+              url={audit.url}
+              command={audit.command}
+              findings={findings.map(f => ({ severity: f.severity, title: f.title, description: f.description, recommendation: f.recommendation || '' }))}
+              scores={{ overall: result?.overall_score ?? null, technical: result?.technical_score ?? null, content: result?.content_score ?? null, schema: result?.schema_score ?? null, performance: result?.performance_score ?? null, images: result?.images_score ?? null, geo: result?.geo_score ?? null }}
+            />
           )}
 
           {/* Findings summary */}
